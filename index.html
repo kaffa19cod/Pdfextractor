@@ -10,6 +10,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.min.js"></script>
     <!-- Se actualizó la versión de Tesseract.js de v2 a v5 para solucionar el error de inicialización. -->
     <script src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js'></script>
+    <!-- AÑADIDO: Librería SheetJS (xlsx) para generar archivos de Excel -->
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <style>
         /* Estilo para el loader */
         .loader {
@@ -27,7 +29,7 @@
     </style>
 </head>
 <body class="bg-gray-100 font-sans flex items-center justify-center min-h-screen">
-    <div class="container mx-auto p-4 md:p-8 max-w-4xl">
+    <div class="container mx-auto p-4 md-p-8 max-w-4xl">
         <div class="bg-white rounded-2xl shadow-lg p-6 md:p-10">
             
             <header class="text-center mb-8">
@@ -76,9 +78,14 @@
                     <h2 class="text-2xl font-bold text-gray-800 mb-4">Datos Extraídos (JSON)</h2>
                     <div class="relative">
                         <pre id="json-output" class="bg-gray-900 text-white p-6 rounded-lg overflow-x-auto text-sm leading-relaxed"></pre>
-                        <div class="absolute top-4 right-4 flex space-x-2">
+                        <!-- MODIFICADO: Grupo de botones para copiar y descargar en diferentes formatos -->
+                        <div class="absolute top-4 right-4 flex items-center space-x-2">
                             <button id="copy-button" class="bg-gray-700 text-white px-3 py-1 rounded-md text-xs hover:bg-gray-600">Copiar</button>
-                            <button id="download-button" class="bg-green-600 text-white px-3 py-1 rounded-md text-xs hover:bg-green-700">Descargar</button>
+                            <span class="text-xs text-gray-400">|</span>
+                            <span class="text-xs font-medium text-gray-200">Descargar:</span>
+                            <button id="download-json-button" class="bg-green-600 text-white px-3 py-1 rounded-md text-xs hover:bg-green-700" title="Descargar como JSON">JSON</button>
+                            <button id="download-csv-button" class="bg-blue-500 text-white px-3 py-1 rounded-md text-xs hover:bg-blue-600" title="Descargar como CSV">CSV</button>
+                            <button id="download-excel-button" class="bg-emerald-500 text-white px-3 py-1 rounded-md text-xs hover:bg-emerald-600" title="Descargar como Excel">Excel</button>
                         </div>
                     </div>
                 </div>
@@ -104,9 +111,12 @@
         const status = document.getElementById('status');
         const fileNameDisplay = document.getElementById('file-name');
         const copyButton = document.getElementById('copy-button');
-        const downloadButton = document.getElementById('download-button');
         const customPromptInput = document.getElementById('custom-prompt');
         const apiKeyInput = document.getElementById('api-key-input');
+        // Nuevos botones de descarga
+        const downloadJsonButton = document.getElementById('download-json-button');
+        const downloadCsvButton = document.getElementById('download-csv-button');
+        const downloadExcelButton = document.getElementById('download-excel-button');
 
         let selectedFile = null;
 
@@ -181,21 +191,81 @@
             setTimeout(() => { copyButton.textContent = 'Copiar'; }, 2000);
         });
 
-        downloadButton.addEventListener('click', () => {
-            const jsonString = jsonOutput.textContent;
-            if (!jsonString) return;
-            const blob = new Blob([jsonString], { type: 'application/json' });
+        // --- LÓGICA DE DESCARGA ---
+
+        function triggerDownload(blob, fileName) {
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'datos_extraidos.json';
+            a.download = fileName;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
+        }
+
+        downloadJsonButton.addEventListener('click', () => {
+            const jsonString = jsonOutput.textContent;
+            if (!jsonString) return;
+            const blob = new Blob([jsonString], { type: 'application/json' });
+            triggerDownload(blob, 'datos_extraidos.json');
         });
 
-        // --- LÓGICA DE EXTRACCIÓN Y PROCESAMIENTO ---
+        downloadCsvButton.addEventListener('click', () => {
+            const jsonString = jsonOutput.textContent;
+            if (!jsonString) return;
+            const jsonData = JSON.parse(jsonString);
+            const csvString = convertToCSV(jsonData);
+            if (!csvString) return;
+            const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+            triggerDownload(blob, 'datos_extraidos.csv');
+        });
+
+        downloadExcelButton.addEventListener('click', () => {
+            const jsonString = jsonOutput.textContent;
+            if (!jsonString) return;
+            const jsonData = JSON.parse(jsonString);
+            
+            const items = jsonData.items;
+            if (!items || !Array.isArray(items) || items.length === 0) {
+                alert('No hay items para exportar a Excel.');
+                return;
+            }
+
+            // Aplanar los datos para que cada item sea una fila con la info del cliente
+            const flattenedData = items.map(item => ({
+                cliente: jsonData.cliente || '',
+                shipTo: jsonData.shipTo || '',
+                partNumber: item.partNumber || '',
+                quantity: item.quantity || 0
+            }));
+
+            const worksheet = XLSX.utils.json_to_sheet(flattenedData);
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, "Datos Extraídos");
+            XLSX.writeFile(workbook, "datos_extraidos.xlsx");
+        });
+
+        // --- FUNCIONES DE CONVERSIÓN Y EXTRACCIÓN ---
+
+        function convertToCSV(jsonData) {
+            const items = jsonData.items;
+            if (!items || !Array.isArray(items) || items.length === 0) return '';
+
+            const headers = ['cliente', 'shipTo', 'partNumber', 'quantity'];
+            const csvRows = [headers.join(',')];
+
+            for (const item of items) {
+                const values = [
+                    `"${(jsonData.cliente || '').replace(/"/g, '""')}"`,
+                    `"${(jsonData.shipTo || '').replace(/"/g, '""')}"`,
+                    `"${(item.partNumber || '').replace(/"/g, '""')}"`,
+                    item.quantity || 0
+                ];
+                csvRows.push(values.join(','));
+            }
+            return csvRows.join('\n');
+        }
 
         async function extractTextFromPdfWithOCR(pdfData) {
             status.textContent = 'Cargando modelo de OCR...';
