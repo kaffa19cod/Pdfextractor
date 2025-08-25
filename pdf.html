@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Extractor de Datos de PDF con IA y OCR</title>
+    <!-- Incluimos Tailwind CSS para un diseño moderno y limpio -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Incluimos la librería PDF.js de Mozilla para leer los archivos PDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.min.js"></script>
+    <!-- CORRECCIÓN: Se actualizó la versión de Tesseract.js de v2 a v5 para solucionar el error de inicialización. -->
+    <script src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js'></script>
+    <style>
+        /* Estilo para el loader */
+        .loader {
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #3498db;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans flex items-center justify-center min-h-screen">
+    <div class="container mx-auto p-4 md:p-8 max-w-4xl">
+        <div class="bg-white rounded-2xl shadow-lg p-6 md:p-10">
+            
+            <header class="text-center mb-8">
+                <h1 class="text-3xl md:text-4xl font-bold text-gray-800">Extractor de Datos de PDF con IA y OCR</h1>
+                <p class="text-gray-500 mt-2">Sube un PDF (de texto o imagen) y define qué datos quieres extraer.</p>
+            </header>
+
+            <main>
+                <!-- Área para subir el archivo -->
+                <div class="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center bg-gray-50 hover:bg-gray-100 transition-colors cursor-pointer" id="drop-zone">
+                    <input type="file" id="pdf-file" accept=".pdf" class="hidden">
+                    <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
+                        <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                    <p class="mt-2 text-sm text-gray-600">
+                        <span class="font-semibold text-blue-600">Haz clic para subir</span> o arrastra y suelta un archivo
+                    </p>
+                    <p class="text-xs text-gray-500 mt-1">Solo archivos PDF</p>
+                    <p id="file-name" class="mt-4 text-sm font-medium text-gray-700"></p>
+                </div>
+
+                <!-- Campo para instrucciones personalizadas -->
+                <div class="mt-6">
+                    <label for="custom-prompt" class="block text-sm font-medium text-gray-700 mb-2">Instrucciones para la IA:</label>
+                    <textarea id="custom-prompt" rows="6" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition">Analiza el documento y extrae la siguiente información:
+1. "cliente": El nombre de la empresa o persona a la que se factura.
+2. "shipTo": La dirección de envío completa.
+3. "items": Una lista de productos, donde cada producto tenga "partNumber" y "quantity".</textarea>
+                </div>
+
+                <!-- Botón para iniciar la extracción -->
+                <div class="text-center mt-6">
+                    <button id="extract-button" class="bg-blue-600 text-white font-bold py-3 px-8 rounded-lg hover:bg-blue-700 transition-transform transform hover:scale-105 disabled:bg-gray-400 disabled:cursor-not-allowed disabled:scale-100" disabled>
+                        Extraer Datos con IA
+                    </button>
+                </div>
+
+                <!-- Área de resultados -->
+                <div id="results-container" class="mt-10 hidden">
+                    <h2 class="text-2xl font-bold text-gray-800 mb-4">Datos Extraídos (JSON)</h2>
+                    <div class="relative">
+                        <pre id="json-output" class="bg-gray-900 text-white p-6 rounded-lg overflow-x-auto text-sm leading-relaxed"></pre>
+                        <div class="absolute top-4 right-4 flex space-x-2">
+                            <button id="copy-button" class="bg-gray-700 text-white px-3 py-1 rounded-md text-xs hover:bg-gray-600">Copiar</button>
+                            <button id="download-button" class="bg-green-600 text-white px-3 py-1 rounded-md text-xs hover:bg-green-700">Descargar</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Indicador de carga -->
+                <div id="loader" class="mx-auto mt-8 loader hidden"></div>
+                <p id="status" class="text-center text-gray-600 mt-4"></p>
+
+            </main>
+        </div>
+    </div>
+
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.worker.min.js';
+
+        const dropZone = document.getElementById('drop-zone');
+        const pdfFileInput = document.getElementById('pdf-file');
+        const extractButton = document.getElementById('extract-button');
+        const jsonOutput = document.getElementById('json-output');
+        const resultsContainer = document.getElementById('results-container');
+        const loader = document.getElementById('loader');
+        const status = document.getElementById('status');
+        const fileNameDisplay = document.getElementById('file-name');
+        const copyButton = document.getElementById('copy-button');
+        const downloadButton = document.getElementById('download-button');
+        const customPromptInput = document.getElementById('custom-prompt');
+
+        let selectedFile = null;
+
+        dropZone.addEventListener('click', () => pdfFileInput.click());
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('border-blue-500', 'bg-blue-50'); });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('border-blue-500', 'bg-blue-50'));
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('border-blue-500', 'bg-blue-50');
+            if (e.dataTransfer.files.length > 0 && e.dataTransfer.files[0].type === 'application/pdf') {
+                handleFileSelect(e.dataTransfer.files[0]);
+            }
+        });
+        pdfFileInput.addEventListener('change', (e) => { if (e.target.files.length > 0) { handleFileSelect(e.target.files[0]); } });
+        
+        function handleFileSelect(file) {
+            selectedFile = file;
+            fileNameDisplay.textContent = `Archivo seleccionado: ${file.name}`;
+            extractButton.disabled = false;
+            resultsContainer.classList.add('hidden');
+            jsonOutput.textContent = '';
+        }
+
+        extractButton.addEventListener('click', async () => {
+            if (!selectedFile) return;
+            loader.classList.remove('hidden');
+            status.textContent = 'Leyendo el archivo PDF...';
+            resultsContainer.classList.add('hidden');
+            extractButton.disabled = true;
+
+            try {
+                const fileReader = new FileReader();
+                fileReader.onload = async (e) => {
+                    const typedarray = new Uint8Array(e.target.result);
+                    const pdfText = await extractTextFromPdfWithOCR(typedarray);
+                    status.textContent = 'La IA está analizando el documento...';
+                    const userPrompt = customPromptInput.value;
+                    const extractedData = await parsePdfTextWithAI(pdfText, userPrompt);
+                    
+                    jsonOutput.textContent = JSON.stringify(extractedData, null, 2);
+                    resultsContainer.classList.remove('hidden');
+                    loader.classList.add('hidden');
+                    status.textContent = '¡Extracción completada!';
+                };
+                fileReader.readAsArrayBuffer(selectedFile);
+            } catch (error) {
+                console.error("Error durante la extracción:", error);
+                status.textContent = `Error: ${error.message}`;
+                loader.classList.add('hidden');
+            } finally {
+                extractButton.disabled = false;
+            }
+        });
+
+        copyButton.addEventListener('click', () => {
+            const textToCopy = jsonOutput.textContent;
+            const textArea = document.createElement('textarea');
+            textArea.value = textToCopy;
+            document.body.appendChild(textArea);
+            textArea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textArea);
+            copyButton.textContent = '¡Copiado!';
+            setTimeout(() => { copyButton.textContent = 'Copiar'; }, 2000);
+        });
+
+        downloadButton.addEventListener('click', () => {
+            const jsonString = jsonOutput.textContent;
+            if (!jsonString) return;
+            const blob = new Blob([jsonString], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'datos_extraidos.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
+
+        /**
+         * Extrae texto de un PDF, renderizando cada página a una imagen y usando OCR.
+         * Esto funciona tanto para PDFs de texto como para PDFs escaneados.
+         * @param {Uint8Array} pdfData - Los datos del archivo PDF.
+         * @returns {Promise<string>} - El texto completo extraído del PDF.
+         */
+        async function extractTextFromPdfWithOCR(pdfData) {
+            status.textContent = 'Cargando modelo de OCR...';
+            const worker = await Tesseract.createWorker('eng+spa'); // Soporte para inglés y español
+            let fullText = '';
+            
+            const pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
+            const numPages = pdf.numPages;
+
+            for (let i = 1; i <= numPages; i++) {
+                status.textContent = `Procesando página ${i} de ${numPages} con OCR...`;
+                const page = await pdf.getPage(i);
+                const viewport = page.getViewport({ scale: 2.0 }); // Escala alta para mejor calidad
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                canvas.height = viewport.height;
+                canvas.width = viewport.width;
+
+                await page.render({ canvasContext: context, viewport: viewport }).promise;
+                
+                const { data: { text } } = await worker.recognize(canvas.toDataURL('image/png'));
+                fullText += text + '\n';
+            }
+
+            await worker.terminate();
+            status.textContent = 'OCR completado. Enviando a la IA...';
+            return fullText;
+        }
+
+        /**
+         * Analiza el texto extraído usando un modelo de IA con un prompt personalizado.
+         * @param {string} text - El texto completo del PDF.
+         * @param {string} userPrompt - Las instrucciones proporcionadas por el usuario.
+         * @returns {Promise<object>} - Una promesa que se resuelve con el objeto JSON extraído.
+         */
+        async function parsePdfTextWithAI(text, userPrompt) {
+            const finalPrompt = `
+                ${userPrompt}
+
+                Analiza el siguiente texto extraído de un documento.
+                Si no encuentras alguna información, usa el valor "No encontrado" o un array vacío [].
+                Tu respuesta DEBE SER ÚNICAMENTE un objeto JSON válido, sin texto adicional antes o después.
+
+                Texto para analizar:
+                ---
+                ${text}
+                ---
+            `;
+
+            const apiKey = "AIzaSyAavS2m7vLyDbJGuM2T9fOoP1XUpYgS5oY";
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+
+            const payload = { contents: [{ parts: [{ text: finalPrompt }] }] };
+
+            try {
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) throw new Error(`Error en la API: ${response.statusText}`);
+
+                const result = await response.json();
+                
+                if (result.candidates && result.candidates[0]?.content?.parts?.[0]) {
+                    let jsonString = result.candidates[0].content.parts[0].text;
+                    jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
+                    return JSON.parse(jsonString);
+                } else {
+                    throw new Error("La IA no devolvió un resultado válido.");
+                }
+            } catch (error) {
+                console.error("Error al contactar la IA:", error);
+                throw error;
+            }
+        }
+    </script>
+</body>
+</html>
