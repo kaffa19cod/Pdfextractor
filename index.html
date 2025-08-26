@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Extractor de Datos de PDF con IA y OCR</title>
+    <title>Extractor de Datos de PDF/Imágenes con IA</title>
     <!-- Incluimos Tailwind CSS para un diseño moderno y limpio -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Incluimos la librería PDF.js de Mozilla para leer los archivos PDF -->
@@ -29,26 +29,28 @@
     </style>
 </head>
 <body class="bg-gray-100 font-sans flex items-center justify-center min-h-screen">
-    <div class="container mx-auto p-4 md-p-8 max-w-4xl">
+    <div class="container mx-auto p-4 md:p-8 max-w-4xl">
         <div class="bg-white rounded-2xl shadow-lg p-6 md:p-10">
             
             <header class="text-center mb-8">
-                <h1 class="text-3xl md:text-4xl font-bold text-gray-800">Extractor de Datos de PDF con IA y OCR</h1>
-                <p class="text-gray-500 mt-2">Sube un PDF (de texto o imagen) y define qué datos quieres extraer.</p>
+                <h1 class="text-3xl md:text-4xl font-bold text-gray-800">Extractor de Datos Múltiples (PDF/Imagen)</h1>
+                <p class="text-gray-500 mt-2">Sube múltiples PDFs o imágenes y define qué datos quieres extraer de ellos.</p>
             </header>
 
             <main>
                 <!-- Área para subir el archivo -->
                 <div class="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center bg-gray-50 hover:bg-gray-100 transition-colors cursor-pointer" id="drop-zone">
-                    <input type="file" id="pdf-file" accept=".pdf" class="hidden">
+                    <!-- MODIFICADO: Se añade 'multiple' y se aceptan imágenes -->
+                    <input type="file" id="file-input" accept=".pdf,image/*" class="hidden" multiple>
                     <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
                         <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
                     </svg>
                     <p class="mt-2 text-sm text-gray-600">
-                        <span class="font-semibold text-blue-600">Haz clic para subir</span> o arrastra y suelta un archivo
+                        <span class="font-semibold text-blue-600">Haz clic para subir</span> o arrastra y suelta archivos
                     </p>
-                    <p class="text-xs text-gray-500 mt-1">Solo archivos PDF</p>
-                    <p id="file-name" class="mt-4 text-sm font-medium text-gray-700"></p>
+                    <p class="text-xs text-gray-500 mt-1">PDFs e Imágenes (JPG, PNG, etc.)</p>
+                    <!-- MODIFICADO: Contenedor para la lista de archivos -->
+                    <div id="file-list" class="mt-4 text-sm text-left"></div>
                 </div>
 
                 <!-- Campo para la API Key -->
@@ -78,7 +80,6 @@
                     <h2 class="text-2xl font-bold text-gray-800 mb-4">Datos Extraídos (JSON)</h2>
                     <div class="relative">
                         <pre id="json-output" class="bg-gray-900 text-white p-6 rounded-lg overflow-x-auto text-sm leading-relaxed"></pre>
-                        <!-- MODIFICADO: Grupo de botones para copiar y descargar en diferentes formatos -->
                         <div class="absolute top-4 right-4 flex items-center space-x-2">
                             <button id="copy-button" class="bg-gray-700 text-white px-3 py-1 rounded-md text-xs hover:bg-gray-600">Copiar</button>
                             <span class="text-xs text-gray-400">|</span>
@@ -103,39 +104,47 @@
 
         // --- ELEMENTOS DEL DOM ---
         const dropZone = document.getElementById('drop-zone');
-        const pdfFileInput = document.getElementById('pdf-file');
+        const fileInput = document.getElementById('file-input');
         const extractButton = document.getElementById('extract-button');
         const jsonOutput = document.getElementById('json-output');
         const resultsContainer = document.getElementById('results-container');
         const loader = document.getElementById('loader');
         const status = document.getElementById('status');
-        const fileNameDisplay = document.getElementById('file-name');
+        const fileListDisplay = document.getElementById('file-list');
         const copyButton = document.getElementById('copy-button');
         const customPromptInput = document.getElementById('custom-prompt');
         const apiKeyInput = document.getElementById('api-key-input');
-        // Nuevos botones de descarga
         const downloadJsonButton = document.getElementById('download-json-button');
         const downloadCsvButton = document.getElementById('download-csv-button');
         const downloadExcelButton = document.getElementById('download-excel-button');
 
-        let selectedFile = null;
+        let selectedFiles = [];
 
         // --- MANEJO DE EVENTOS ---
-        dropZone.addEventListener('click', () => pdfFileInput.click());
+        dropZone.addEventListener('click', () => fileInput.click());
         dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('border-blue-500', 'bg-blue-50'); });
         dropZone.addEventListener('dragleave', () => dropZone.classList.remove('border-blue-500', 'bg-blue-50'));
         dropZone.addEventListener('drop', (e) => {
             e.preventDefault();
             dropZone.classList.remove('border-blue-500', 'bg-blue-50');
-            if (e.dataTransfer.files.length > 0 && e.dataTransfer.files[0].type === 'application/pdf') {
-                handleFileSelect(e.dataTransfer.files[0]);
+            if (e.dataTransfer.files.length > 0) {
+                handleFileSelect(e.dataTransfer.files);
             }
         });
-        pdfFileInput.addEventListener('change', (e) => { if (e.target.files.length > 0) { handleFileSelect(e.target.files[0]); } });
+        fileInput.addEventListener('change', (e) => { if (e.target.files.length > 0) { handleFileSelect(e.target.files); } });
         
-        function handleFileSelect(file) {
-            selectedFile = file;
-            fileNameDisplay.textContent = `Archivo seleccionado: ${file.name}`;
+        function handleFileSelect(files) {
+            selectedFiles = Array.from(files);
+            fileListDisplay.innerHTML = '<p class="font-semibold mb-2">Archivos seleccionados:</p>';
+            const list = document.createElement('ul');
+            list.className = 'list-disc pl-5 text-gray-600';
+            selectedFiles.forEach(file => {
+                const listItem = document.createElement('li');
+                listItem.textContent = file.name;
+                list.appendChild(listItem);
+            });
+            fileListDisplay.appendChild(list);
+
             extractButton.disabled = false;
             resultsContainer.classList.add('hidden');
             jsonOutput.textContent = '';
@@ -145,36 +154,51 @@
             const apiKey = apiKeyInput.value;
             if (!apiKey) {
                 status.textContent = "Error: Por favor, introduce una API Key de Gemini válida.";
-                resultsContainer.classList.add('hidden');
                 return;
             }
+            if (selectedFiles.length === 0) return;
 
-            if (!selectedFile) return;
             loader.classList.remove('hidden');
-            status.textContent = 'Leyendo el archivo PDF...';
             resultsContainer.classList.add('hidden');
             extractButton.disabled = true;
-
+            
+            const allResults = [];
+            
             try {
-                const fileReader = new FileReader();
-                fileReader.onload = async (e) => {
-                    const typedarray = new Uint8Array(e.target.result);
-                    const pdfText = await extractTextFromPdfWithOCR(typedarray);
-                    status.textContent = 'La IA está analizando el documento...';
-                    const userPrompt = customPromptInput.value;
-                    const extractedData = await parsePdfTextWithAI(pdfText, userPrompt, apiKey);
+                for (let i = 0; i < selectedFiles.length; i++) {
+                    const file = selectedFiles[i];
+                    status.textContent = `Procesando archivo ${i + 1} de ${selectedFiles.length}: ${file.name}`;
+                    let text = '';
+
+                    if (file.type === 'application/pdf') {
+                        const typedarray = await file.arrayBuffer().then(buffer => new Uint8Array(buffer));
+                        text = await extractTextFromPdfWithOCR(typedarray, i + 1, selectedFiles.length);
+                    } else if (file.type.startsWith('image/')) {
+                        text = await extractTextFromImage(file);
+                    } else {
+                        console.warn(`Archivo no soportado: ${file.name}`);
+                        continue; // Salta al siguiente archivo
+                    }
                     
-                    jsonOutput.textContent = JSON.stringify(extractedData, null, 2);
-                    resultsContainer.classList.remove('hidden');
-                    loader.classList.add('hidden');
-                    status.textContent = '¡Extracción completada!';
-                };
-                fileReader.readAsArrayBuffer(selectedFile);
+                    status.textContent = `La IA está analizando: ${file.name}...`;
+                    const userPrompt = customPromptInput.value;
+                    const extractedData = await parsePdfTextWithAI(text, userPrompt, apiKey);
+                    
+                    allResults.push({
+                        sourceFile: file.name,
+                        data: extractedData
+                    });
+                }
+                
+                jsonOutput.textContent = JSON.stringify(allResults, null, 2);
+                resultsContainer.classList.remove('hidden');
+                status.textContent = `¡Extracción completada para ${selectedFiles.length} archivos!`;
+
             } catch (error) {
                 console.error("Error durante la extracción:", error);
                 status.textContent = `Error: ${error.message}`;
-                loader.classList.add('hidden');
             } finally {
+                loader.classList.add('hidden');
                 extractButton.disabled = false;
             }
         });
@@ -211,12 +235,43 @@
             triggerDownload(blob, 'datos_extraidos.json');
         });
 
+        function flattenDataForExport(allResults) {
+            const flattenedData = [];
+            allResults.forEach(result => {
+                const sourceFile = result.sourceFile;
+                const data = result.data;
+                if (data.items && Array.isArray(data.items)) {
+                    data.items.forEach(item => {
+                        flattenedData.push({
+                            sourceFile: sourceFile,
+                            cliente: data.cliente || '',
+                            shipTo: data.shipTo || '',
+                            partNumber: item.partNumber || '',
+                            quantity: item.quantity || 0
+                        });
+                    });
+                }
+            });
+            return flattenedData;
+        }
+
         downloadCsvButton.addEventListener('click', () => {
             const jsonString = jsonOutput.textContent;
             if (!jsonString) return;
-            const jsonData = JSON.parse(jsonString);
-            const csvString = convertToCSV(jsonData);
-            if (!csvString) return;
+            const allResults = JSON.parse(jsonString);
+            const flattenedData = flattenDataForExport(allResults);
+            if (flattenedData.length === 0) { alert('No hay items para exportar.'); return; }
+
+            const headers = Object.keys(flattenedData[0]);
+            const csvRows = [headers.join(',')];
+            for (const row of flattenedData) {
+                const values = headers.map(header => {
+                    const escaped = ('' + row[header]).replace(/"/g, '""');
+                    return `"${escaped}"`;
+                });
+                csvRows.push(values.join(','));
+            }
+            const csvString = csvRows.join('\n');
             const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
             triggerDownload(blob, 'datos_extraidos.csv');
         });
@@ -224,21 +279,9 @@
         downloadExcelButton.addEventListener('click', () => {
             const jsonString = jsonOutput.textContent;
             if (!jsonString) return;
-            const jsonData = JSON.parse(jsonString);
-            
-            const items = jsonData.items;
-            if (!items || !Array.isArray(items) || items.length === 0) {
-                alert('No hay items para exportar a Excel.');
-                return;
-            }
-
-            // Aplanar los datos para que cada item sea una fila con la info del cliente
-            const flattenedData = items.map(item => ({
-                cliente: jsonData.cliente || '',
-                shipTo: jsonData.shipTo || '',
-                partNumber: item.partNumber || '',
-                quantity: item.quantity || 0
-            }));
+            const allResults = JSON.parse(jsonString);
+            const flattenedData = flattenDataForExport(allResults);
+            if (flattenedData.length === 0) { alert('No hay items para exportar.'); return; }
 
             const worksheet = XLSX.utils.json_to_sheet(flattenedData);
             const workbook = XLSX.utils.book_new();
@@ -246,84 +289,49 @@
             XLSX.writeFile(workbook, "datos_extraidos.xlsx");
         });
 
-        // --- FUNCIONES DE CONVERSIÓN Y EXTRACCIÓN ---
+        // --- FUNCIONES DE EXTRACCIÓN ---
 
-        function convertToCSV(jsonData) {
-            const items = jsonData.items;
-            if (!items || !Array.isArray(items) || items.length === 0) return '';
-
-            const headers = ['cliente', 'shipTo', 'partNumber', 'quantity'];
-            const csvRows = [headers.join(',')];
-
-            for (const item of items) {
-                const values = [
-                    `"${(jsonData.cliente || '').replace(/"/g, '""')}"`,
-                    `"${(jsonData.shipTo || '').replace(/"/g, '""')}"`,
-                    `"${(item.partNumber || '').replace(/"/g, '""')}"`,
-                    item.quantity || 0
-                ];
-                csvRows.push(values.join(','));
-            }
-            return csvRows.join('\n');
+        async function extractTextFromImage(file) {
+            status.textContent = `Cargando modelo OCR para imagen: ${file.name}...`;
+            const worker = await Tesseract.createWorker('eng+spa');
+            const { data: { text } } = await worker.recognize(file);
+            await worker.terminate();
+            return text;
         }
 
-        async function extractTextFromPdfWithOCR(pdfData) {
-            status.textContent = 'Cargando modelo de OCR...';
+        async function extractTextFromPdfWithOCR(pdfData, currentFileNum, totalFiles) {
             const worker = await Tesseract.createWorker('eng+spa');
             let fullText = '';
-            
             const pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
             const numPages = pdf.numPages;
 
             for (let i = 1; i <= numPages; i++) {
-                status.textContent = `Procesando página ${i} de ${numPages} con OCR...`;
+                status.textContent = `Archivo ${currentFileNum}/${totalFiles}: Procesando página ${i}/${numPages} con OCR...`;
                 const page = await pdf.getPage(i);
                 const viewport = page.getViewport({ scale: 2.0 });
                 const canvas = document.createElement('canvas');
                 const context = canvas.getContext('2d');
                 canvas.height = viewport.height;
                 canvas.width = viewport.width;
-
                 await page.render({ canvasContext: context, viewport: viewport }).promise;
-                
                 const { data: { text } } = await worker.recognize(canvas.toDataURL('image/png'));
                 fullText += text + '\n';
             }
-
             await worker.terminate();
-            status.textContent = 'OCR completado. Enviando a la IA...';
             return fullText;
         }
 
         async function parsePdfTextWithAI(text, userPrompt, apiKey) {
-            const finalPrompt = `
-                ${userPrompt}
-                Analiza el siguiente texto extraído de un documento.
-                Si no encuentras alguna información, usa el valor "No encontrado" o un array vacío [].
-                Tu respuesta DEBE SER ÚNICAMENTE un objeto JSON válido, sin texto adicional antes o después.
-                Texto para analizar:
-                ---
-                ${text}
-                ---
-            `;
-
+            const finalPrompt = `${userPrompt}\n\nAnaliza el siguiente texto extraído de un documento. Si no encuentras alguna información, usa el valor "No encontrado" o un array vacío []. Tu respuesta DEBE SER ÚNICAMENTE un objeto JSON válido, sin texto adicional antes o después.\n\nTexto para analizar:\n---\n${text}\n---`;
             const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
             const payload = { contents: [{ parts: [{ text: finalPrompt }] }] };
 
             try {
-                const response = await fetch(apiUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
+                const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
                 if (!response.ok) throw new Error(`Error en la API: ${response.statusText}`);
-
                 const result = await response.json();
-                
                 if (result.candidates && result.candidates[0]?.content?.parts?.[0]) {
-                    let jsonString = result.candidates[0].content.parts[0].text;
-                    jsonString = jsonString.replace(/```json/g, '').replace(/```/g, '').trim();
+                    let jsonString = result.candidates[0].content.parts[0].text.replace(/```json/g, '').replace(/```/g, '').trim();
                     return JSON.parse(jsonString);
                 } else {
                     throw new Error("La IA no devolvió un resultado válido.");
